@@ -83,6 +83,11 @@ def train_one_epoch(
 
         optimizer.zero_grad()
         loss.backward()
+        # Gradient clipping prevents explosion when training from scratch
+        # with large lambda_coord and deep network.
+        torch.nn.utils.clip_grad_norm_(
+            model.parameters(), config.GRAD_CLIP_NORM
+        )
         optimizer.step()
 
         total_loss += loss.item()

@@ -55,10 +55,16 @@ class YOLOv1(nn.Module):
     # ------------------------------------------------------------------
     @staticmethod
     def _conv_block(in_c: int, out_c: int, kernel: int, **kwargs) -> list:
-        """Conv2d + LeakyReLU(0.1).  Padding keeps spatial dims when s=1."""
+        """Conv2d + BatchNorm + LeakyReLU(0.1).
+
+        BatchNorm is essential for from-scratch training (without ImageNet
+        pretrained backbone) to stabilise activations across the deep network.
+        Padding keeps spatial dims when stride=1.
+        """
         padding = kwargs.pop("padding", kernel // 2)
         return [
-            nn.Conv2d(in_c, out_c, kernel, padding=padding, **kwargs),
+            nn.Conv2d(in_c, out_c, kernel, padding=padding, bias=False, **kwargs),
+            nn.BatchNorm2d(out_c),
             nn.LeakyReLU(0.1, inplace=True),
         ]
 
@@ -114,7 +120,7 @@ class YOLOv1(nn.Module):
     # Weight initialisation
     # ------------------------------------------------------------------
     def _initialize_weights(self) -> None:
-        """Kaiming (He) init for LeakyReLU layers; zero biases."""
+        """Kaiming (He) init for conv/BN layers; Xavier for FC layers."""
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(
@@ -122,8 +128,11 @@ class YOLOv1(nn.Module):
                 )
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.ones_(m.weight)
+                nn.init.zeros_(m.bias)
             elif isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, 0, 0.01)
+                nn.init.xavier_uniform_(m.weight)
                 nn.init.zeros_(m.bias)
 
     # ------------------------------------------------------------------
