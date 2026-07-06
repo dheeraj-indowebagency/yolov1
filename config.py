@@ -41,11 +41,12 @@ DROPOUT = 0.5        # Applied after the first fully-connected layer.
 #   epochs 1 - 74 : 1e-2
 #   epochs 75-104 : 1e-3
 #   epochs 105-134: 1e-4
-WARMUP_LR_START = 1e-3
+WARMUP_LR_START = 1e-4
 WARMUP_LR_END = 1e-2
-WARMUP_EPOCHS = 1
+WARMUP_EPOCHS = 5            # Extended warmup for from-scratch training.
 LR_MILESTONES = [75, 105]       # Epochs at which the rate drops.
 LR_VALUES = [1e-2, 1e-3, 1e-4]  # Rates for each segment.
+GRAD_CLIP_NORM = 5.0            # Max gradient norm for stability.
 
 # ---------------------------------------------------------------------------
 # Data augmentation (Section 2.2)

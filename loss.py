@@ -13,7 +13,9 @@ Notation (from the paper):
                     with the ground-truth among the B predictors in that cell).
     1_{ij}^noobj -- complement of 1_{ij}^obj (all other predictor slots).
     1_i^obj      -- an object's centre falls in cell i.
-    C'           -- target confidence = IoU(predicted_box, ground_truth_box).
+    C'           -- target confidence.  The paper uses IoU(pred, gt) but this
+                    causes confidence collapse when training from scratch.
+                    Default: 1.0 for responsible predictor (stable from scratch).
     p(c)         -- conditional class probability.
 
 Reference: https://arxiv.org/abs/1506.02640
@@ -33,6 +35,7 @@ class YOLOv1Loss(nn.Module):
         C: int = config.C,
         lambda_coord: float = config.LAMBDA_COORD,
         lambda_noobj: float = config.LAMBDA_NOOBJ,
+        use_iou_as_conf_target: bool = False,
     ):
         super().__init__()
         self.S = S
@@ -40,6 +43,13 @@ class YOLOv1Loss(nn.Module):
         self.C = C
         self.lambda_coord = lambda_coord
         self.lambda_noobj = lambda_noobj
+        # When False (default), confidence target for the responsible
+        # predictor is 1.0.  The paper uses IoU(pred, gt) as target, but
+        # this causes confidence collapse when training from scratch:
+        # early random predictions yield IoU ≈ 0 everywhere, so the model
+        # never learns to produce high confidence scores.
+        # Set to True only when using a pretrained backbone.
+        self.use_iou_as_conf_target = use_iou_as_conf_target
 
     # ------------------------------------------------------------------
     # IoU helper
@@ -120,13 +130,15 @@ class YOLOv1Loss(nn.Module):
         tgt_cls = targets[..., 5:]            # (N, S, S, C)
 
         # -- Determine the responsible predictor (highest IoU with GT) --------
+        # Clamp predicted w/h to non-negative for IoU computation so that
+        # early random (negative) predictions don't collapse all IoU to 0.
         best_iou = torch.full_like(obj_mask, -1.0)
         best_idx = torch.zeros_like(obj_mask, dtype=torch.long)
 
         for b in range(self.B):
             offset = b * 5
             pred_xy = predictions[..., offset:offset + 2]
-            pred_wh = predictions[..., offset + 2:offset + 4]
+            pred_wh = predictions[..., offset + 2:offset + 4].clamp(min=0)
             iou = self._iou(pred_xy, pred_wh, tgt_xy, tgt_wh)
             better = iou > best_iou
             best_iou = torch.where(better, iou, best_iou)
@@ -169,10 +181,18 @@ class YOLOv1Loss(nn.Module):
             coord_loss = coord_loss + xy_loss + wh_loss
 
             # ---- Confidence loss (obj) --------------------------------------
-            # Target confidence = IoU(predicted box, ground-truth box).
-            iou_target = self._iou(pred_xy, pred_wh, tgt_xy, tgt_wh).detach()
+            # Target confidence: use 1.0 (stable for from-scratch training)
+            # or IoU(pred, gt) as described in the paper (requires pretrained
+            # backbone to avoid confidence collapse).
+            if self.use_iou_as_conf_target:
+                pred_wh_pos = pred_wh.clamp(min=0)
+                conf_target = self._iou(
+                    pred_xy, pred_wh_pos, tgt_xy, tgt_wh
+                ).detach()
+            else:
+                conf_target = obj_mask  # 1.0 where object exists
             obj_conf_loss = obj_conf_loss + (
-                responsible * (pred_conf - iou_target) ** 2
+                responsible * (pred_conf - conf_target) ** 2
             ).sum()
 
             # ---- Confidence loss (noobj) ------------------------------------
